@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#16181A">
-<link rel="manifest" href="manifest.json"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png"><meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png">
 <title>ピットボード</title>
 <style>
 :root{
@@ -116,7 +116,7 @@ textarea{min-height:110px;font-family:"JetBrains Mono",monospace;font-size:13px}
     </div>
     <div class="tools">
       <button class="btn" id="wakeBtn" type="button">画面を消さない</button>
-      
+      <button class="btn pri" id="impTop" type="button">PDFを読み込む</button>
       <button class="btn" id="editBtn" type="button">スケジュール編集</button>
     </div>
   </header>
@@ -136,6 +136,16 @@ textarea{min-height:110px;font-family:"JetBrains Mono",monospace;font-size:13px}
   </section>
 
   <div class="editor" id="editor" hidden>
+    
+    <div class="imp" id="impBox">
+      <label class="drop" id="drop">
+        <input id="file" type="file" accept="application/pdf,.pdf,image/png,image/jpeg,image/webp" aria-label="タイムスケジュールのファイルを選ぶ">
+        <div class="ic">PDF</div>
+        <div><b>PDF・スクショから読み込む</b><span>ここをタップして公式タイムスケジュールのPDFかスクショを選ぶと、読み取って全日程を書き換えます</span></div>
+      </label>
+      <div class="impstat" id="impstat" hidden></div>
+      <div id="keyBox" style="display:flex;flex-direction:column;gap:6px"></div>
+    </div>
     
     <div class="field">
       <label for="evtIn">大会名</label>
@@ -370,6 +380,203 @@ document.getElementById('clearBtn').onclick=e=>{
   if(!clearArm){clearArm=true;e.target.textContent='もう一度押すと消去';setTimeout(()=>{clearArm=false;e.target.textContent='この日を全て消去'},3000);return}
   state.days[sel]=[];changed();renderEditor();clearArm=false;e.target.textContent='この日を全て消去';
 };
+
+
+/* ---------- import from PDF / image ---------- */
+const stat=document.getElementById('impstat');
+let sampleFn=null,imgLimits=null,ctl=null,prevState=null;
+const API_KEY_STORE='pitboard.apikey';
+const MODEL='claude-sonnet-5-5';
+function getKey(){try{return localStorage.getItem(API_KEY_STORE)||''}catch(e){return ''}}
+function setKey(v){try{v?localStorage.setItem(API_KEY_STORE,v):localStorage.removeItem(API_KEY_STORE)}catch(e){}}
+function loadScript(src){return new Promise((ok,ng)=>{const t=document.createElement('script');t.src=src;t.onload=ok;t.onerror=()=>ng(new Error('部品の読み込みに失敗'));document.head.appendChild(t)})}
+async function ensurePdfjs(){
+  if(window.pdfjsLib)return window.pdfjsLib;
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  return window.pdfjsLib;
+}
+function blobToB64(blob){return new Promise((ok,ng)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(',')[1]);r.onerror=ng;r.readAsDataURL(blob)})}
+async function askClaude(content,signal){
+  const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',signal,headers:{'content-type':'application/json','x-api-key':getKey(),'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify({model:MODEL,max_tokens:8000,messages:[{role:'user',content}]})});
+  if(!res.ok){let m='';try{m=(await res.json()).error?.message||''}catch(e){}
+    throw {code:res.status===401?'bad_key':res.status===429?'rate_limited':res.status===400&&/credit/i.test(m)?'no_credit':'upstream_error',message:m}}
+  const j=await res.json();const text=(j.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('');
+  const m=text.match(/```(?:json)?\s*([\s\S]*?)```/);const raw=m?m[1]:text.slice(text.search(/[\{\[]/),text.lastIndexOf('}')+1);
+  try{return JSON.parse(raw)}catch(e){throw {code:'invalid_json'}}
+}
+function renderKeyUI(){
+  const box=document.getElementById('keyBox');if(!box)return;
+  const k=getKey();
+  box.innerHTML=k?`<span class="note">AI読み取り：APIキー設定済み（…${esc(k.slice(-4))}）</span> <button class="btn" type="button" id="keyDel">キーを削除</button>`
+   :`<label for="keyIn">AI読み取り用のAPIキー（最初に1回だけ）</label><div class="field"><input id="keyIn" type="password" autocomplete="off" placeholder="sk-ant-..." style="flex:1;min-width:0;width:auto"><button class="btn pri" type="button" id="keySave">保存</button></div><span class="note">Claude Console（platform.claude.com）で作成したキーを貼ります。キーはこのスマホの中だけに保存されます。読み取り1回あたり数円〜十数円かかります。</span>`;
+  const sv=document.getElementById('keySave');if(sv)sv.onclick=()=>{const v=document.getElementById('keyIn').value.trim();if(!/^sk-/.test(v)){showStat('<span class="err">キーの形式が違うようです。「sk-ant-」で始まる文字列を貼ってください。</span>');return}setKey(v);renderKeyUI();showStat('<span class="ok">APIキーを保存しました。PDFやスクショを選ぶと読み取れます。</span>')};
+  const dl=document.getElementById('keyDel');if(dl)dl.onclick=()=>{setKey('');renderKeyUI()};
+}
+const ready=Promise.resolve();
+function openEditor(){const ed=document.getElementById('editor'),b=document.getElementById('editBtn');if(ed.hidden){ed.hidden=false;b.classList.add('on');b.textContent='編集を閉じる';renderEditor()}}
+let pickTimer=null;
+function watchPicker(){
+  clearTimeout(pickTimer);
+  const cancel=()=>{clearTimeout(pickTimer);pickTimer=null};
+  window.addEventListener('blur',cancel,{once:true});
+  document.addEventListener('visibilitychange',cancel,{once:true});
+  pickTimer=setTimeout(()=>{pickTimer=null;showStat('<span class="err">ファイル選択が開かないようです。</span><span class="note">ChromeのアドレスバーにこのアプリのURLを入れて開き直すか、「文字でまとめて貼り付け」を使ってください。</span>')},2500);
+}
+renderKeyUI();
+document.getElementById('impTop').onclick=()=>{openEditor();try{document.getElementById('file').click()}catch(e){}watchPicker();document.getElementById('impBox').scrollIntoView({block:'start'})};
+document.getElementById('file').addEventListener('click',e=>{if(e.isTrusted)watchPicker()});
+
+function showStat(html){stat.hidden=false;stat.innerHTML=html}
+function canvasToBlob(c,type='image/jpeg',q=0.9){return new Promise(r=>c.toBlob(r,type,q))}
+
+async function fileToCanvas(file){
+  if(file.type==='application/pdf'||/\.pdf$/i.test(file.name)){
+    const lib=await ensurePdfjs();
+    const doc=await lib.getDocument({data:await file.arrayBuffer()}).promise;
+    const page=await doc.getPage(1);
+    const v1=page.getViewport({scale:1});
+    const scale=Math.min(4,3600/Math.max(v1.width,v1.height));
+    const vp=page.getViewport({scale});
+    const c=document.createElement('canvas');c.width=Math.round(vp.width);c.height=Math.round(vp.height);
+    const g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);
+    await page.render({canvasContext:g,viewport:vp}).promise;
+    return {canvas:c,pages:doc.numPages};
+  }
+  const bmp=await createImageBitmap(file);
+  const c=document.createElement('canvas');c.width=bmp.width;c.height=bmp.height;c.getContext('2d').drawImage(bmp,0,0);
+  return {canvas:c,pages:1};
+}
+async function pdfText(file){
+  const lib=await ensurePdfjs();
+  const doc=await lib.getDocument({data:await file.arrayBuffer()}).promise;
+  const page=await doc.getPage(1);const vp=page.getViewport({scale:1});
+  const tc=await page.getTextContent();
+  const its=tc.items.filter(i=>i.str&&i.str.trim()).map(i=>({s:i.str.trim(),x:Math.round(i.transform[4]),y:Math.round(vp.height-i.transform[5])}));
+  its.sort((a,b)=>a.y-b.y||a.x-b.x);
+  const lines=[];let cur=null;
+  for(const i of its){if(!cur||Math.abs(i.y-cur.y)>3){cur={y:i.y,parts:[]};lines.push(cur)}cur.parts.push(i)}
+  const txt=lines.map(l=>'y'+l.y+': '+l.parts.map(p=>p.s+'@'+p.x).join(' | ')).join('\n');
+  return {txt:txt.slice(0,55000),count:its.length,w:Math.round(vp.width),h:Math.round(vp.height),pages:doc.numPages};
+}
+function trimWhite(src){
+  const w=src.width,h=src.height,d=src.getContext('2d').getImageData(0,0,w,h).data;
+  let x0=w,y0=h,x1=0,y1=0;
+  for(let y=0;y<h;y+=2)for(let x=0;x<w;x+=2){const i=(y*w+x)*4;if(d[i]<200||d[i+1]<200||d[i+2]<200){if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y}}
+  if(x1<=x0||y1<=y0)return src;
+  const pad=10;x0=Math.max(0,x0-pad);y0=Math.max(0,y0-pad);x1=Math.min(w,x1+pad);y1=Math.min(h,y1+pad);
+  const c=document.createElement('canvas');c.width=x1-x0;c.height=y1-y0;c.getContext('2d').drawImage(src,x0,y0,c.width,c.height,0,0,c.width,c.height);return c;
+}
+async function buildImages(src,maxCount){
+  const out=[await canvasToBlob(src)];
+  const room=maxCount-1;if(room<2)return {blobs:out,desc:'画像1枚：全体'};
+  const land=src.width>=src.height;
+  let cols,rows;
+  if(room>=6){[cols,rows]=land?[3,2]:[2,3]} else if(room>=4){[cols,rows]=[2,2]} else {[cols,rows]=land?[2,1]:[1,2]}
+  const ov=0.08,tw=src.width/cols,th=src.height/rows,names=[];
+  for(let r=0;r<rows;r++)for(let q=0;q<cols;q++){
+    const x=Math.max(0,q*tw-tw*ov),y=Math.max(0,r*th-th*ov),w=Math.min(src.width-x,tw*(1+2*ov)),h=Math.min(src.height-y,th*(1+2*ov));
+    const c=document.createElement('canvas');c.width=Math.round(w);c.height=Math.round(h);c.getContext('2d').drawImage(src,x,y,w,h,0,0,c.width,c.height);
+    out.push(await canvasToBlob(c));names.push((rows>1?(r===0?'上段':r===rows-1?'下段':'中段'):'')+(cols>1?(q===0?'左':q===cols-1?'右':'中央'):''));
+  }
+  return {blobs:out,desc:`画像1枚目は全体、2枚目以降は拡大した部分（${cols}列×${rows}行に少し重ねて分割、順に：${names.join('、')}）`};
+}
+
+function buildPrompt(desc){
+  const now=new Date();
+  return `あなたはモータースポーツ（ロードレース、モトクロス等）のタイムスケジュールを読み取るアシスタントです。
+添付画像は大会の公式タイムスケジュール（横軸が時刻、行が日付と種別の表）です。${desc}。
+全体画像で時刻軸の目盛り位置を把握し、拡大画像で小さな数字（分）を読んでください。枠の左右に書かれた小さな数字は開始・終了の「分」です。
+
+全ての日について、書かれている予定を漏れなく読み取り、次のJSONだけを返してください。
+{"event":"大会名（ラウンド・会場を含む短い名前）","days":[{"date":"YYYY-MM-DD","items":[{"time":"HH:MM","prep":"HH:MM または空文字","name":"名前","dur":分数,"type":"run または other","note":"補足（任意、短く）"}]}]}
+
+ルール：
+- 年が書かれていなければ ${now.getFullYear()} 年とする（今日は ${ymd(now)}）。
+- type="run" はコース上の走行：フリー走行、練習走行、公式練習、予選、タイムアタック、ウォームアップ／ウォーミングアップ、サイティングラップ、決勝、ヒートなど。クラスごとに1件ずつ。
+- type="other" は走行以外：受付、車検、ブリーフィング、選手集合、表彰、記者会見、ピットウォーク、パドックオープン、コースチェック、休憩、日出・日没など。
+- 走行の直前に「スタート進行」「コースイン」「選手集合」「ウェイティング」の開始時刻があれば、その走行の prep に入れる（別の other 項目にはしない）。
+- name はクラス名＋セッション名（例「ST600 決勝 19Laps」「IA1 公式練習」）。周回数や時間があれば含める。
+- dur は枠の長さ（分）。終了時刻が読めなければ枠の幅から推定し、推定した場合は note に「終了は目安」と書く。
+- 時刻は24時間表記。読み取れない項目は推測で作らず省略する。`;
+}
+
+function normalize(res){
+  if(!res||!Array.isArray(res.days))throw {code:'shape'};
+  const days={};
+  for(const d of res.days){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(d.date)))continue;
+    const list=(Array.isArray(d.items)?d.items:[]).map(i=>{
+      const t=String(i.time||'').replace(/^(\d):/,'0$1:');if(!/^\d{2}:\d{2}$/.test(t))return null;
+      const p=String(i.prep||'').replace(/^(\d):/,'0$1:');
+      return {time:t,prep:/^\d{2}:\d{2}$/.test(p)?p:'',name:String(i.name||'予定').slice(0,80),dur:Math.max(0,Math.min(600,Math.round(+i.dur||0))),type:i.type==='run'?'run':'other',note:i.note?String(i.note).slice(0,60):''};
+    }).filter(Boolean);
+    if(list.length)days[d.date]=(days[d.date]||[]).concat(list);
+  }
+  if(!Object.keys(days).length)throw {code:'shape'};
+  return {event:String(res.event||'').slice(0,80),days};
+}
+
+const ERR={not_granted:'読み取りが許可されませんでした。',sampling_disabled:'このアカウントでは読み取り機能が使えません。',rate_limited:'利用が混み合っているか上限に達しました。少し時間をおいて試してください。',session_expired:'ログインし直してから試してください。',image_rejected:'このファイルは読み込めませんでした。別の形式（PDF、PNG、JPEG）で試してください。',refused:'このファイルは読み取れませんでした。',invalid_json:'読み取り結果を整理できませんでした。もう一度試してください。',shape:'予定が見つかりませんでした。タイムスケジュールのページか確認してください。',empty_completion:'読み取り結果が空でした。もう一度試してください。'};
+
+async function importFile(file){
+  if(!file)return;
+  openEditor();
+  if(!getKey()){showStat('<span class="err">先にAI読み取り用のAPIキーを保存してください。</span><span class="note">この下の欄に貼って「保存」を押します。</span>');document.getElementById('keyIn')?.focus();return}
+  if(!navigator.onLine){showStat('<span class="err">電波がないため読み取れません。</span><span class="note">電波のある所でもう一度選んでください。読み取った後のスケジュールは電波なしでも使えます。</span>');return}
+  ctl?.abort();ctl=new AbortController();const myCtl=ctl;
+  const isPdf=file.type==='application/pdf'||/\.pdf$/i.test(file.name);
+  showStat(`<div class="prog"><div class="spin"></div><span>「${esc(file.name)}」を開いています…</span></div>`);
+  let content=[],thumb='',pages=1;
+  try{
+    let src=null;
+    try{({canvas:src,pages}=await fileToCanvas(file))}catch(e){if(!isPdf)throw e}
+    if(src){
+      src=trimWhite(src);
+      const {blobs,desc}=await buildImages(src,7);
+      thumb=URL.createObjectURL(blobs[0]);
+      for(const b of blobs)content.push({type:'image',source:{type:'base64',media_type:'image/jpeg',data:await blobToB64(b)}});
+      content.push({type:'text',text:buildPrompt(desc)});
+    }else{
+      content.push({type:'document',source:{type:'base64',media_type:'application/pdf',data:await blobToB64(file)}});
+      content.push({type:'text',text:buildPrompt('PDFをそのまま添付しています').replace('添付画像は','添付PDFは')});
+    }
+  }catch(e){showStat(`<span class="err">ファイルを開けませんでした。</span><span class="note">PDF・PNG・JPEGのいずれかを選んでください。</span>`);return}
+  const th=thumb?`<img class="thumb" src="${thumb}" alt="読み込んだタイムスケジュール">`:'';
+  showStat(`${th}<div class="prog"><div class="spin"></div><span>タイムスケジュールを読み取っています。1〜2分かかります</span></div><div class="tools"><button class="btn" type="button" id="stopImp">中止</button></div>`);
+  document.getElementById('stopImp').onclick=()=>myCtl.abort();
+  try{
+    const res=await askClaude(content,myCtl.signal);
+    const n=normalize(res);
+    prevState=JSON.parse(JSON.stringify(state));
+    state={lead:state.lead??15,isSample:false,event:n.event,days:n.days,source:`「${file.name}」から読み取り（${new Date().toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}）。小さな数字の読み違いがないか公式と照らしてください。`};
+    save();sel=pickDefaultDay();renderDays();tick();renderEditor();
+    const ks=dayKeys(),total=ks.reduce((a,k)=>a+state.days[k].length,0),runs=ks.reduce((a,k)=>a+state.days[k].filter(i=>i.type==='run').length,0);
+    showStat(`${th}<span class="ok">書き換えました：${ks.length}日分・${total}件（走行${runs}件）</span>${pages>1?'<span class="note">PDFの1ページ目を読み取りました。</span>':''}<div class="tools"><button class="btn" type="button" id="undoImp">元に戻す</button></div>`);
+    document.getElementById('undoImp').onclick=()=>{if(!prevState)return;state=prevState;prevState=null;save();sel=pickDefaultDay();renderDays();tick();renderEditor();showStat('<span class="note">読み込み前のスケジュールに戻しました。</span>')};
+  }catch(e){
+    if(e?.name==='AbortError'||e?.code==='cancelled'){showStat('<span class="note">読み取りを中止しました。</span>');return}
+    const M={bad_key:'APIキーが正しくないか、無効になっています。キーを削除して貼り直してください。',no_credit:'Claude Consoleのクレジット残高が足りません。チャージしてから試してください。',rate_limited:'混み合っています。少し時間をおいて試してください。',invalid_json:'読み取り結果を整理できませんでした。もう一度試してください。',shape:'予定が見つかりませんでした。タイムスケジュールのページか確認してください。'};
+    const msg=M[e?.code]||(e instanceof TypeError?'通信できませんでした。電波を確認してください。':'読み取り中に問題が起きました。もう一度試してください。');
+    showStat(`<span class="err">${msg}</span><span class="note">今のスケジュールはそのままです。</span>`);
+  }
+}
+function buildTextPrompt(t){
+  const base=buildPrompt('（画像ではなく、PDFから取り出した文字データです）');
+  return base.replace('添付画像は大会の公式タイムスケジュール','以下は大会の公式タイムスケジュールPDF')
+   +`\n\n文字データの形式：1行が紙面上の1行（yは上からの位置）。各文字列の後ろの@数字は左からの位置x（ページ幅${t.w}、高さ${t.h}）。
+時刻の見出し（6:00, 7:00…）のx位置から時刻軸を割り出し、各枠の文字のx位置と、その近くの小さな数字（分）から開始・終了時刻を決めてください。
+日付（例 9/27, 10/10）の行のy範囲で、どの日の予定かを判断してください。
+
+--- 文字データ ---
+${t.txt}`;
+}
+const fileIn=document.getElementById('file'),drop=document.getElementById('drop');
+fileIn.onchange=()=>{clearTimeout(pickTimer);const f=fileIn.files[0];fileIn.value='';importFile(f)};
+['dragenter','dragover'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add('over')}));
+['dragleave','drop'].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('over')}));
+drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)importFile(f)});
 
 
 /* wake lock */
