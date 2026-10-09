@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#16181A">
+<link rel="manifest" href="manifest.json"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png"><meta name="apple-mobile-web-app-capable" content="yes">
+<title>ピットボード</title>
+<style>
+:root{
+  --bg:#EEF0EC; --panel:#FFFFFF; --ink:#16181A; --muted:#61666B; --line:#D5D8D3;
+  --board:#16181A; --boardInk:#F5F5F0; --sig:#E8B31C; --go:#23914F; --stop:#CF3B28; --past:#A8ACA6;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#111314; --panel:#1B1E20; --ink:#ECEDE8; --muted:#9AA09B; --line:#2C3032;
+    --board:#050606; --boardInk:#F5F5F0; --sig:#F2C230; --go:#3BBF6E; --stop:#F0604B; --past:#555A57;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#111314; --panel:#1B1E20; --ink:#ECEDE8; --muted:#9AA09B; --line:#2C3032;
+  --board:#050606; --boardInk:#F5F5F0; --sig:#F2C230; --go:#3BBF6E; --stop:#F0604B; --past:#555A57;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:"Noto Sans JP",system-ui,sans-serif;font-size:15px;line-height:1.5}
+.wrap{max-width:720px;margin:0 auto;padding:16px 16px 48px;display:flex;flex-direction:column;gap:18px}
+.mono{font-family:"JetBrains Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.disp{font-family:"Barlow Condensed","Noto Sans JP",sans-serif}
+header{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+header h1{margin:0;font-size:14px;letter-spacing:.04em;color:var(--muted);font-weight:700;text-wrap:balance}
+.clock{font-size:34px;font-weight:700;line-height:1}
+.tools{display:flex;gap:8px;flex-wrap:wrap}
+button,select,input{font:inherit;color:inherit}
+.btn{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer;font-size:14px;font-weight:500}
+.btn:disabled{opacity:.5;cursor:default}
+.btn:focus-visible,input:focus-visible,select:focus-visible,.drop:focus-within{outline:2px solid var(--sig);outline-offset:2px}
+.btn.on,.btn.pri{background:var(--sig);border-color:var(--sig);color:#16181A;font-weight:700}
+
+/* import */
+.imp{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px}
+.drop{display:flex;align-items:center;gap:12px;border:2px dashed var(--line);border-radius:8px;padding:12px;cursor:pointer;position:relative}
+.drop.over{border-color:var(--sig);background:color-mix(in srgb,var(--sig) 10%,var(--panel))}
+.drop input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
+.drop .ic{flex:none;width:40px;height:40px;border-radius:8px;background:var(--board);color:var(--sig);display:grid;place-items:center;font-weight:800;font-size:12px;font-family:"Barlow Condensed",sans-serif;letter-spacing:.04em}
+.drop b{display:block;font-size:15px}
+.drop span{font-size:12.5px;color:var(--muted)}
+.impstat{font-size:13.5px;display:flex;flex-direction:column;gap:8px}
+.impstat[hidden]{display:none}
+.prog{display:flex;align-items:center;gap:10px}
+.spin{width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--sig);border-radius:50%;animation:sp 0.9s linear infinite;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+.ok{color:var(--go);font-weight:700} .err{color:var(--stop);font-weight:700}
+.thumb{max-height:90px;border-radius:6px;border:1px solid var(--line);align-self:flex-start}
+
+/* days */
+.days{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}
+.day{flex:none;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:14px;font-weight:700}
+.day small{font-weight:500;color:var(--muted);margin-left:4px}
+.day.sel{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.day.sel small{color:inherit;opacity:.7}
+.day .td{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--go);margin-left:6px;vertical-align:1px}
+
+/* pit board hero */
+.board{background:var(--board);color:var(--boardInk);border-radius:6px;padding:18px 18px 16px;position:relative;overflow:hidden;border-top:6px solid var(--sig)}
+.board .lbl{font-size:12px;letter-spacing:.14em;color:var(--sig);font-weight:700}
+.board .cls{font-size:40px;font-weight:800;line-height:1.05;margin-top:4px;text-wrap:balance;letter-spacing:.02em}
+.board .sub{font-size:14px;opacity:.75;margin-top:2px}
+.board .cd{font-size:clamp(56px,17vw,104px);font-weight:700;line-height:1;margin-top:10px;letter-spacing:-.02em}
+.board .cd.warn{color:var(--sig)} .board .cd.hot{color:var(--stop)}
+.board .prep{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px dashed #ffffff33;font-size:14px}
+.board .prep b{font-family:"JetBrains Mono",monospace;font-size:20px;color:var(--sig)}
+.board.empty .cls{font-size:28px}
+
+section h2{font-size:12px;letter-spacing:.14em;color:var(--muted);margin:0 0 8px;font-weight:700}
+.list{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.row{display:grid;grid-template-columns:62px 1fr auto;gap:12px;align-items:center;padding:11px 14px;border-top:1px solid var(--line)}
+.row:first-child{border-top:0}
+.row .t{font-size:17px;font-weight:700}
+.row .n{font-weight:700;line-height:1.3}
+.row .m{font-size:12.5px;color:var(--muted)}
+.row .r{font-size:16px;font-weight:700;text-align:right;white-space:nowrap}
+.row.next{background:color-mix(in srgb,var(--sig) 16%,var(--panel))}
+.row.live .r{color:var(--go)}
+.row.past{color:var(--past)} .row.past .m{color:var(--past)}
+.chip{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:99px;margin-left:6px;vertical-align:1px}
+.chip.live{background:var(--go);color:#fff} .chip.next{background:var(--sig);color:#16181A}
+.emptyrow{padding:14px;color:var(--muted);font-size:14px}
+
+/* editor */
+.editor{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:14px}
+.editor label{font-size:12px;color:var(--muted);font-weight:700;letter-spacing:.06em}
+.erow{display:grid;grid-template-columns:88px 88px 1fr 56px 80px 34px;gap:6px;align-items:center}
+.erow input,.erow select,textarea,.field input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 8px;min-width:0}
+.erow .x{background:none;border:0;color:var(--stop);font-size:20px;cursor:pointer}
+.ehead{font-size:11px;color:var(--muted)}
+textarea{min-height:110px;font-family:"JetBrains Mono",monospace;font-size:13px}
+.field{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.field input.s{width:80px}
+.note{font-size:12.5px;color:var(--muted);margin:0}
+@media (max-width:480px){
+  .erow{grid-template-columns:1fr 1fr 56px 34px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  .erow .nm{grid-column:1 / 5}
+  .erow .du{grid-column:1 / 3}
+  .erow .ty{grid-column:3 / 4}
+  .erow .x{grid-row:1;grid-column:4}
+  .ehead{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+[hidden]{display:none!important}body{margin:0;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+</style></head><body>
+
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1 id="evt">ピットボード タイマー</h1>
+      <div class="clock mono" id="clock">--:--:--</div>
+    </div>
+    <div class="tools">
+      <button class="btn" id="wakeBtn" type="button">画面を消さない</button>
+      
+      <button class="btn" id="editBtn" type="button">スケジュール編集</button>
+    </div>
+  </header>
+
+  <div class="days" id="days"></div>
+
+  <div class="board" id="board" aria-live="polite"></div>
+
+  <section>
+    <h2>走行スケジュール</h2>
+    <div class="list" id="runList"></div>
+  </section>
+
+  <section>
+    <h2>その他の予定</h2>
+    <div class="list" id="otherList"></div>
+  </section>
+
+  <div class="editor" id="editor" hidden>
+    
+    <div class="field">
+      <label for="evtIn">大会名</label>
+      <input id="evtIn" type="text">
+    </div>
+    <div class="field">
+      <label for="lead">準備リード（スタート進行／スタートの何分前に準備完了）</label>
+      <input id="lead" class="s" type="number" min="0" max="120" inputmode="numeric"> <span class="note">分</span>
+    </div>
+    <div>
+      <label id="edDay">予定一覧</label>
+      <div class="erow ehead" style="margin:6px 0 4px"><span>開始</span><span>進行(任意)</span><span>名前</span><span>分</span><span>種類</span><span></span></div>
+      <div id="rows" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div class="tools" style="margin-top:10px">
+        <button class="btn" type="button" id="addRun">＋ 走行</button>
+        <button class="btn" type="button" id="addOther">＋ その他</button>
+      </div>
+    </div>
+    <div>
+      <label for="bulk">文字でまとめて貼り付け</label>
+      <p class="note" style="margin:2px 0 6px">1行に「時刻 名前 分数」。行末に * で走行、+ でその他。「[10/10]」の行で日付を分けると全日程を置き換え、日付行が無ければ選択中の日だけを置き換えます。</p>
+      <textarea id="bulk" placeholder="# 大会名&#10;[10/10]&#10;08:00 IA1 公式練習 20 *&#10;12:00 ライダーズブリーフィング 15 +&#10;[10/11]&#10;13:40 IA1 決勝 30 進行13:25 *"></textarea>
+      <div class="tools" style="margin-top:8px">
+        <button class="btn" type="button" id="bulkBtn">取り込む</button>
+        <button class="btn" type="button" id="copyBtn">全日程を文字でコピー</button>
+        <button class="btn" type="button" id="sampleBtn">岡山9/27に戻す</button>
+        <button class="btn" type="button" id="clearBtn">この日を全て消去</button>
+      </div>
+      <p class="note" id="msg" style="margin-top:6px"></p>
+    </div>
+  </div>
+
+  <p class="note" id="srcNote" style="text-align:center"></p>
+</div>
+
+
+<script>
+const KEY='pitboard.offline.v1';
+const WD=['日','月','火','水','木','金','土'];
+function hm(d){return d.toString().padStart(2,'0')}
+function ymd(d){return d.getFullYear()+'-'+hm(d.getMonth()+1)+'-'+hm(d.getDate())}
+function todayKey(){return ymd(new Date())}
+function dayLabel(k){const [y,m,d]=k.split('-').map(Number);const dt=new Date(y,m-1,d);return m+'/'+d+'（'+WD[dt.getDay()]+'）'}
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+
+function sample(){
+  return {lead:15,isSample:true,source:'公式通知No.1（2026.9.14発行）の画像から読み取り。決勝終了・表彰の時刻は目安です。',
+    event:'2026 全日本ロードレース Rd.6 スーパーバイクレース in 岡山',
+    days:{'2026-09-27':[
+    {time:'08:30',name:'J-GP3 ウォーミングアップ',dur:15,type:'run'},
+    {time:'08:55',name:'ST1000 ウォーミングアップ',dur:15,type:'run'},
+    {time:'09:20',name:'JSB1000 ウォーミングアップ',dur:15,type:'run'},
+    {time:'09:45',name:'ST600 ウォーミングアップ',dur:15,type:'run'},
+    {time:'10:30',prep:'10:15',name:'J-GP3 決勝 19Laps',dur:35,type:'run'},
+    {time:'12:40',prep:'12:25',name:'ST1000 決勝 18Laps',dur:38,type:'run'},
+    {time:'13:50',prep:'13:35',name:'JSB1000 決勝 24Laps',dur:45,type:'run'},
+    {time:'15:15',prep:'15:00',name:'ST600 決勝 19Laps',dur:35,type:'run'},
+    {time:'05:53',name:'日出',dur:0,type:'other'},
+    {time:'11:05',name:'J-GP3 暫定表彰・記者会見',dur:15,type:'other'},
+    {time:'11:25',name:'ピットウォーク',dur:45,type:'other'},
+    {time:'13:20',name:'ST1000 暫定表彰・記者会見',dur:15,type:'other'},
+    {time:'14:35',name:'JSB1000 暫定表彰・記者会見',dur:15,type:'other'},
+    {time:'15:50',name:'ST600 暫定表彰・記者会見',dur:15,type:'other'},
+    {time:'16:00',name:'サーキットクルージング（受付：スタンド上 総合info）',dur:0,type:'other'},
+    {time:'16:30',name:'CN燃料預け GS様',dur:60,type:'other'},
+    {time:'17:55',name:'日没',dur:0,type:'other'}
+  ]}};
+}
+let state;
+try{state=JSON.parse(localStorage.getItem(KEY))}catch(e){}
+if(!state||!state.days)state=sample();
+function save(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}}
+function dayKeys(){return Object.keys(state.days).sort()}
+function pickDefaultDay(){const ks=dayKeys(),t=todayKey();if(ks.includes(t))return t;return ks.find(k=>k>t)||ks[ks.length-1]||t}
+let sel=pickDefaultDay();
+function items(){return state.days[sel]||(state.days[sel]=[])}
+
+function toDate(t,k){const m=/^(\d{1,2}):(\d{2})$/.exec((t||'').trim());if(!m)return null;const [y,mo,d]=(k||sel).split('-').map(Number);return new Date(y,mo-1,d,+m[1],+m[2],0,0)}
+function fmt(ms){const s=Math.max(0,Math.floor(ms/1000));const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return (h?h+':'+hm(m):hm(m))+':'+hm(x)}
+function fmtShort(ms){const m=Math.ceil(ms/60000);if(m<60)return m+'分';if(m<1440)return Math.floor(m/60)+'時間'+(m%60?hm(m%60)+'分':'');return Math.floor(m/1440)+'日後'}
+function prepAt(i){const p=i.prep&&toDate(i.prep);return p?p.getTime():i.s.getTime()}
+function sorted(type){return items().filter(i=>i.type===type&&toDate(i.time)).map(i=>{const s=toDate(i.time);return {...i,s,e:new Date(s.getTime()+(+i.dur||0)*60000)}}).sort((a,b)=>a.s-b.s)}
+function clk(d){return hm(d.getHours())+':'+hm(d.getMinutes())}
+
+function renderList(el,list,now,isRun){
+  if(!list.length){el.innerHTML='<div class="emptyrow">予定はありません</div>';return}
+  const nextIdx=list.findIndex(i=>i.s>now);
+  el.innerHTML=list.map((i,idx)=>{
+    const live=i.s<=now&&now<i.e, past=!live&&i.s<=now;
+    let cls='row',chip='',right='';
+    if(live){cls+=' live';chip='<span class="chip live">'+(isRun?'走行中':'実施中')+'</span>';right='残 '+fmt(i.e-now)}
+    else if(past){cls+=' past';right='終了'}
+    else{if(idx===nextIdx){cls+=' next';chip='<span class="chip next">次</span>'}right='あと '+(i.s-now<3600000?fmt(i.s-now):fmtShort(i.s-now))}
+    const endTxt=i.dur>0?'〜'+clk(i.e)+'（'+i.dur+'分）':'';
+    let prep='';
+    if(isRun&&!past&&!live){if(i.prep&&toDate(i.prep))prep+=' ・ 進行 '+esc(i.prep);if(state.lead>0)prep+=' ・ 準備完了 '+clk(new Date(prepAt(i)-state.lead*60000))}
+    const note=i.note?'<br>'+esc(i.note):'';
+    return `<div class="${cls}"><div class="t mono">${esc(i.time)}</div><div><div class="n">${esc(i.name)}${chip}</div><div class="m">${endTxt}${prep}${note}</div></div><div class="r mono">${right}</div></div>`;
+  }).join('');
+}
+
+function renderBoard(runs,now){
+  const b=document.getElementById('board');
+  const live=runs.find(i=>i.s<=now&&now<i.e);
+  const next=runs.find(i=>i.s>now);
+  if(!runs.length){b.className='board empty';b.innerHTML='<div class="lbl">NEXT START</div><div class="cls disp">この日の走行はありません</div>';return}
+  if(!next&&!live){b.className='board empty';b.innerHTML=`<div class="lbl">NEXT START</div><div class="cls disp">${dayLabel(sel)}の走行は全て終了</div><div class="sub">お疲れさまでした</div>`;return}
+  let html='';
+  if(next){
+    const ms=next.s-now;
+    const c=ms<5*60000?'hot':ms<15*60000?'warn':'';
+    html+=`<div class="lbl">NEXT START ・ ${sel===todayKey()?'':dayLabel(sel)+' '}${esc(next.time)} スタート</div><div class="cls disp">${esc(next.name)}</div>`;
+    html+=`<div class="cd mono ${c}">-${ms<86400000?fmt(ms):fmtShort(ms)}</div>`;
+    const p=[];
+    const pp=next.prep&&toDate(next.prep);
+    if(pp){const pms=pp-now;p.push(pms>0?`<span>スタート進行（${esc(next.prep)}）まで <b>${fmt(pms)}</b></span>`:`<span>スタート進行 <b style="color:var(--go)">開始済み</b></span>`)}
+    if(state.lead>0){const pm=prepAt(next)-now-state.lead*60000;p.push(pm>0?`<span>準備完了まで <b>${fmt(pm)}</b></span>`:`<span>準備完了（${pp?'進行':'スタート'}${state.lead}分前）を<b style="color:var(--stop)">経過</b></span>`)}
+    if(live)p.push(`<span>走行中：${esc(live.name)} 残 <b>${fmt(live.e-now)}</b></span>`);
+    const after=runs.filter(i=>i.s>now)[1];
+    if(after)p.push(`<span>その次：${esc(after.time)} ${esc(after.name)}</span>`);
+    if(p.length)html+=`<div class="prep">${p.join('')}</div>`;
+  }else{
+    html=`<div class="lbl">ON TRACK</div><div class="cls disp">${esc(live.name)}</div><div class="sub">この日最後の走行</div><div class="cd mono">${fmt(live.e-now)}</div>`;
+  }
+  b.className='board';b.innerHTML=html;
+}
+
+function renderDays(){
+  const el=document.getElementById('days'),t=todayKey(),ks=dayKeys();
+  el.hidden=ks.length<2&&ks[0]===t;
+  el.innerHTML=ks.map(k=>`<button type="button" class="day${k===sel?' sel':''}" data-k="${k}">${dayLabel(k)}<small>${state.days[k].filter(i=>i.type==='run').length}走行</small>${k===t?'<span class="td" title="今日"></span>':''}</button>`).join('');
+  el.querySelectorAll('.day').forEach(b=>b.onclick=()=>{sel=b.dataset.k;renderDays();tick();if(!document.getElementById('editor').hidden)renderEditor()});
+}
+
+function tick(){
+  const now=new Date();
+  document.getElementById('clock').textContent=clk(now)+':'+hm(now.getSeconds());
+  const runs=sorted('run');
+  renderBoard(runs,now);
+  renderList(document.getElementById('runList'),runs,now,true);
+  renderList(document.getElementById('otherList'),sorted('other'),now,false);
+  document.getElementById('evt').textContent=state.event||'ピットボード タイマー';
+  document.getElementById('srcNote').textContent=state.source||'';
+}
+
+/* editor */
+const rowsEl=document.getElementById('rows');
+function changed(){state.isSample=false;save();tick();renderDays()}
+function renderEditor(){
+  document.getElementById('lead').value=state.lead;
+  document.getElementById('evtIn').value=state.event||'';
+  document.getElementById('edDay').textContent='予定一覧 ・ '+dayLabel(sel);
+  rowsEl.innerHTML='';
+  items().forEach((it,i)=>{
+    const d=document.createElement('div');d.className='erow';
+    d.innerHTML=`<input id="t${i}" type="time" value="${esc(it.time)}" aria-label="開始時刻">
+      <input id="p${i}" type="time" value="${esc(it.prep||'')}" aria-label="スタート進行">
+      <input id="n${i}" class="nm" type="text" value="${esc(it.name)}" aria-label="名前">
+      <input id="d${i}" class="du" type="number" min="0" inputmode="numeric" value="${it.dur||0}" aria-label="所要分">
+      <select id="y${i}" class="ty" aria-label="種類"><option value="run"${it.type==='run'?' selected':''}>走行</option><option value="other"${it.type==='other'?' selected':''}>その他</option></select>
+      <button class="x" type="button" aria-label="削除">×</button>`;
+    d.querySelector(`#t${i}`).onchange=e=>{it.time=e.target.value;changed()};
+    d.querySelector(`#p${i}`).onchange=e=>{it.prep=e.target.value;changed()};
+    d.querySelector(`#n${i}`).oninput=e=>{it.name=e.target.value;changed()};
+    d.querySelector(`#d${i}`).oninput=e=>{it.dur=+e.target.value||0;changed()};
+    d.querySelector(`#y${i}`).onchange=e=>{it.type=e.target.value;changed()};
+    d.querySelector('.x').onclick=()=>{items().splice(i,1);changed();renderEditor()};
+    rowsEl.appendChild(d);
+  });
+}
+function nowHM(off){return clk(new Date(Date.now()+off*60000))}
+document.getElementById('evtIn').oninput=e=>{state.event=e.target.value;changed()};
+document.getElementById('lead').oninput=e=>{state.lead=Math.max(0,+e.target.value||0);changed()};
+document.getElementById('addRun').onclick=()=>{items().push({time:nowHM(30),name:'新しい走行',dur:20,type:'run'});changed();renderEditor()};
+document.getElementById('addOther').onclick=()=>{items().push({time:nowHM(30),name:'新しい予定',dur:0,type:'other'});changed();renderEditor()};
+document.getElementById('editBtn').onclick=e=>{const ed=document.getElementById('editor');ed.hidden=!ed.hidden;e.target.classList.toggle('on',!ed.hidden);e.target.textContent=ed.hidden?'スケジュール編集':'編集を閉じる';if(!ed.hidden){renderEditor();ed.scrollIntoView({behavior:'smooth'})}};
+
+const RUNWORDS=/(走行|予選|決勝|練習|フリー|FP|QP|ウォーミング|ウォームアップ|サイティング|ヒート|レース|周|Laps|タイムアタック)/i;
+function toText(){
+  const L=[];if(state.event)L.push('# '+state.event);
+  for(const k of dayKeys()){const [y,m,d]=k.split('-');L.push('['+y+'/'+(+m)+'/'+(+d)+']');
+    for(const i of state.days[k].slice().sort((a,b)=>a.time.localeCompare(b.time)))
+      L.push(i.time+' '+i.name.replace(/\s*[*+]$/,'')+(i.dur?' '+i.dur:'')+(i.prep?' 進行'+i.prep:'')+(i.type==='run'?' *':' +'));}
+  return L.join('\n');
+}
+function parseText(txt){
+  let event=null,cur=null,days={},hasDate=false,flat=[];const y0=+sel.slice(0,4);
+  txt.split(/\n/).forEach(line=>{
+    let l=line.replace(/：/g,':').replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-65248)).trim();
+    if(!l)return;
+    if(l[0]==='#'){event=l.replace(/^#+\s*/,'');return}
+    const dh=/^[\[【]?\s*(?:(\d{4})[\/\-.年])?(\d{1,2})[\/\-.月](\d{1,2})日?\s*(?:[（(].*?[)）])?\s*[\]】]?$/.exec(l);
+    if(dh){hasDate=true;cur=(dh[1]||y0)+'-'+hm(+dh[2])+'-'+hm(+dh[3]);days[cur]=days[cur]||[];return}
+    const m=/^(\d{1,2})[:時](\d{2})分?\s*[-〜~]?\s*(?:(\d{1,2})[:時](\d{2})分?)?\s*(.*)$/.exec(l);if(!m)return;
+    let rest=m[5].trim(),type=null;
+    if(/\s?\*$/.test(rest)){type='run';rest=rest.replace(/\s?\*$/,'').trim()}
+    else if(/\s\+$/.test(rest)){type='other';rest=rest.replace(/\s\+$/,'').trim()}
+    let prep='';const pm=/\s*(?:進行|ｽﾀｰﾄ進行|スタート進行)\s*(\d{1,2}):(\d{2})/.exec(rest);
+    if(pm){prep=hm(+pm[1])+':'+pm[2];rest=(rest.slice(0,pm.index)+rest.slice(pm.index+pm[0].length)).trim()}
+    let dur=0;const dm=/\s(\d{1,3})\s*分?$/.exec(rest);
+    if(m[3]){dur=Math.max(0,(+m[3]*60+ +m[4])-(+m[1]*60+ +m[2]))}
+    else if(dm){dur=+dm[1];rest=rest.slice(0,dm.index).trim()}
+    const it={time:hm(+m[1])+':'+m[2],prep,name:rest||'予定',dur,type:type||(RUNWORDS.test(rest)?'run':'other')};
+    if(cur)days[cur].push(it);else flat.push(it);
+  });
+  return {event,hasDate,days,flat};
+}
+document.getElementById('bulkBtn').onclick=()=>{
+  const msg=document.getElementById('msg');const r=parseText(document.getElementById('bulk').value);
+  Object.keys(r.days).forEach(k=>{if(!r.days[k].length)delete r.days[k]});
+  if(r.hasDate&&Object.keys(r.days).length){
+    const prev=JSON.parse(JSON.stringify(state));
+    state.days=r.days;if(r.event)state.event=r.event;state.source='';sel=pickDefaultDay();changed();renderEditor();
+    const n=Object.values(r.days).reduce((a,v)=>a+v.length,0);
+    msg.innerHTML=Object.keys(r.days).length+'日分・'+n+'件で全日程を置き換えました。 <button class="btn" type="button" id="undoBulk">元に戻す</button>';
+    document.getElementById('undoBulk').onclick=()=>{state=prev;sel=pickDefaultDay();save();renderDays();renderEditor();tick();msg.textContent='元に戻しました。'};
+    return;
+  }
+  if(!r.flat.length){msg.textContent='時刻が読み取れませんでした。「09:00 ST600 予選 30 *」の形で1行ずつ入力してください。';return}
+  if(r.event)state.event=r.event;
+  state.days[sel]=r.flat;changed();renderEditor();msg.textContent=dayLabel(sel)+'に'+r.flat.length+'件を取り込みました。';
+};
+document.getElementById('copyBtn').onclick=async()=>{
+  const t=toText(),ta=document.getElementById('bulk'),msg=document.getElementById('msg');
+  ta.value=t;
+  try{await navigator.clipboard.writeText(t);msg.textContent='全日程をコピーしました。オフライン版の「文字でまとめて貼り付け」に貼って「取り込む」を押してください。'}
+  catch(e){ta.focus();ta.select();msg.textContent='下の欄に全日程を出しました。全選択してコピーしてください。'}
+};
+document.getElementById('sampleBtn').onclick=()=>{state=sample();sel=pickDefaultDay();save();renderDays();renderEditor();tick()};
+let clearArm=false;
+document.getElementById('clearBtn').onclick=e=>{
+  if(!clearArm){clearArm=true;e.target.textContent='もう一度押すと消去';setTimeout(()=>{clearArm=false;e.target.textContent='この日を全て消去'},3000);return}
+  state.days[sel]=[];changed();renderEditor();clearArm=false;e.target.textContent='この日を全て消去';
+};
+
+
+/* wake lock */
+let lock=null;
+const wakeBtn=document.getElementById('wakeBtn');
+wakeBtn.onclick=async()=>{
+  if(lock){try{await lock.release()}catch(e){}lock=null;wakeBtn.classList.remove('on');return}
+  try{lock=await navigator.wakeLock.request('screen');wakeBtn.classList.add('on');lock.addEventListener('release',()=>{lock=null;wakeBtn.classList.remove('on')})}
+  catch(e){wakeBtn.textContent='この端末では使えません'}
+};
+
+renderDays();tick();setInterval(tick,1000);
+</script>
+<script>if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});</script>
+</body></html>
